@@ -15,10 +15,17 @@ import java.sql.DriverManager;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.ResultSetMetaData;
+import java.sql.SQLException;
 import java.sql.Statement;
 import java.sql.Types;
 import java.util.ArrayList;
+import java.util.Collection;
+import java.util.Collections;
+import java.util.Comparator;
+import java.util.Date;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -38,19 +45,32 @@ public class OracleDumper {
 	
 	public static void dropSchema(Connection connection) throws Exception 
 	{
-		executeFromQuery(connection, "select 'drop table ' ||  table_name ||  ' cascade constraints' from user_tables");
-		executeFromQuery(connection, "select 'drop synonym ' ||  synonym_name from user_synonyms");
-		executeFromQuery(connection, "select 'drop view ' ||  view_name from user_views");
-		executeFromQuery(connection, "select 'drop function ' ||  object_name from user_objects where object_type = 'FUNCTION'");
-		executeFromQuery(connection, "select 'drop procedure ' ||  object_name from user_objects where object_type = 'PROCEDURE'");
-		executeFromQuery(connection, "select 'drop package ' ||  object_name from user_objects where object_type = 'PACKAGE'");
-		executeFromQuery(connection, "select 'drop type ' ||  type_name ||  ' force' from user_types");
-		executeFromQuery(connection, "select 'drop sequence ' ||  sequence_name from user_sequences");
+		String tableQuery = "select 'drop table \"' ||  table_name ||'\" cascade constraints' from user_tables";
+		// domain indexes sometimes create a supporting table
+		// which gets dropped when the parent gets dropped.  This will
+		// cause an exception when we attempt to drop the underlying
+		// table.  To avoid this false error, do the drops twice:  The 
+		// first time, ignore exceptions.  The second time, throw exceptions.
+		// That way if anything gets dropped twice, it's not a problem, but
+		// anything that cannot be dropped is a hard error.
+		executeFromQuery(connection, tableQuery, true);
+		executeFromQuery(connection, tableQuery, false);
+		
+		executeFromQuery(connection, "select 'drop synonym \"' ||  synonym_name ||'\"' from user_synonyms");
+		executeFromQuery(connection, "select 'drop view \"' ||  view_name ||'\"' from user_views");
+		executeFromQuery(connection, "select 'drop function \"' ||  object_name ||'\"' from user_objects where object_type = 'FUNCTION'");
+		executeFromQuery(connection, "select 'drop procedure \"' ||  object_name ||'\"' from user_objects where object_type = 'PROCEDURE'");
+		executeFromQuery(connection, "select 'drop package \"' ||  object_name ||'\"' from user_objects where object_type = 'PACKAGE'");
+		executeFromQuery(connection, "select 'drop type \"' ||  type_name ||  '\" force' from user_types");
+		executeFromQuery(connection, "select 'drop sequence \"' ||  sequence_name ||'\"' from user_sequences");
 		executeFromQuery(connection, "select 'purge recyclebin' from dual");
 	}
 	
-	
 	private static void executeFromQuery(Connection connection, String query)  throws Exception {
+		executeFromQuery(connection, query, false);
+	}
+	
+	private static void executeFromQuery(Connection connection, String query, boolean ignoreException)  throws Exception {
 		Statement nonprepared = connection.createStatement();
 
 		ResultSet resultSet = nonprepared.executeQuery(query);
@@ -62,14 +82,31 @@ public class OracleDumper {
 		
 		for(String stmt : statements)
 		{
-			System.out.println(stmt);
-			nonprepared.execute(stmt);
+			printSqlToExecute(stmt);
+			try 
+			{
+				nonprepared.execute(stmt);
+			} 
+			catch (SQLException ex)
+			{
+				if(ignoreException)
+				{
+					System.out.println("(Ignoring exception)");
+					ex.printStackTrace();
+				}
+				else
+					throw ex;
+			}
 		}
 	}
 
+	static public void printSqlToExecute(String sql)
+	{
+		Date d = new Date();
+		System.out.println(d+" Executing: "+sql);
+	}
 
-
-	private static void importSchema(FileInputStream fis, Connection dest) throws Exception {
+	public static void importSchema(FileInputStream fis, Connection dest) throws Exception {
 		while(true)
 		{
 			ObjectInputStream ios;
@@ -89,17 +126,17 @@ public class OracleDumper {
 		dest.commit();
 	}
 
-
-	public static void writeObject(OutputStream os, Serializable obj) throws Exception
+	private static int writeObject(OutputStream os, Serializable obj) throws Exception
 	{
 		ByteArrayOutputStream baos = new ByteArrayOutputStream();
         ObjectOutputStream oos = new ObjectOutputStream(baos);
         oos.writeObject(obj);
         oos.close();
         
-        System.out.println("bytes writen: "+baos.size());
         os.write(baos.toByteArray());
         os.flush();
+        
+        return baos.size();
 	}
 	
 //	public static List<TableDefinition> getDefinitions(Connection connection) throws Exception
@@ -185,7 +222,7 @@ public class OracleDumper {
 		return blob.getBytes(1, (int) blob.length());
 	}
 
-	public static void performInsert(Connection connection, TableDefinition table, List<Object[]> rows) throws Exception
+	protected static void performInsert(Connection connection, TableDefinition table, List<Object[]> rows) throws Exception
 	{
 		StringBuilder sb = new StringBuilder();
 		sb.append("insert into \"");
@@ -235,22 +272,22 @@ public class OracleDumper {
 		statement.close();
 	}
 	
-	public static void execute(Connection connection, String sql) throws Exception
+	protected static void execute(Connection connection, String sql) throws Exception
 	{
 		PreparedStatement statement = connection.prepareStatement(sql);
 		statement.execute();
 		statement.close();
 	}
 	
-	public static String stringFromClob(Clob clob) throws Exception
+	protected static String stringFromClob(Clob clob) throws Exception
 	{
 		if(clob == null)
 			return null;
 		return clob.getSubString(1L, new Long(clob.length()).intValue()) ;
 	}
 	
-	public static List<String> extractDDL(Connection connection, String srcSchema, String query) throws Exception {
-		Pattern triggerPattern = Pattern.compile("(?s)(.*)ALTER TRIGGER \"[^\"]+\"\\.\"[^\"]+\" ENABLE\\s*");
+	protected static List<String> extractDDL(Connection connection, String srcSchema, String query) throws Exception {
+		Pattern triggerPattern = Pattern.compile("(?s)(.*)ALTER\\s+TRIGGER\\s+\\S+\\s+ENABLE\\s*");
 
 		List<String> statements = new ArrayList<String>();
 		PreparedStatement preparedStatement = connection.prepareStatement(query);
@@ -259,18 +296,25 @@ public class OracleDumper {
 		{
 			String statement = stringFromClob(resultSet.getClob(1));
 
-			// correct the schema name on the object
-			statement = statement.replaceAll("\""+srcSchema.toUpperCase()+"\".", "");
-
-			// now a hack to cope with the bad sql produced from triggers.  Triggers result in an extra 
+			// a hack to cope with the bad sql produced from triggers.  Triggers result in an extra 
 			// ddl statement to enable trigger.  If our execute could handle multiple statments (using 
 			// using both kinds of delimiters, we could just execute it
 			// but since that's a little tricky, let's just strip out the alter statements.
-			Matcher m = triggerPattern.matcher(statement);
-			if (m.matches()) {
+			while(true)
+			{
+				Matcher m = triggerPattern.matcher(statement);
+				if(!m.matches())
+					break;
+				
+//				System.out.println("Before: "+statement);
 				statement = m.group(1);
+//				System.out.println("After: "+statement);
 			}
-		
+			
+			// correct the schema name on the object
+			// do we want to make this regex more specific?
+			statement = statement.replaceAll("\""+srcSchema.toUpperCase()+"\".", "");
+
 			statements.add(statement);
 		}
 
@@ -280,52 +324,34 @@ public class OracleDumper {
 		return statements;
 	}
 	
-	static interface Operation extends Serializable
-	{
-		public void execute(Connection connection) throws Exception;
-	}
-	
-	static class ExecuteSqlList implements Operation
-	{
-		List<String> statements;
-
-		public ExecuteSqlList(List<String> statements) {
-			super();
-			this.statements = statements;
-		}
-
-		public void execute(Connection connection) throws Exception {
-			Statement statement = connection.createStatement();
-			for(String str : statements)
-				statement.execute(str);
-		}
-		
-	}
-	
-	static class ExecuteTableLoad implements Operation
-	{
-		List<Object[]> rows;
-		TableDefinition tableDefinition;
-		
-		public void execute(Connection connection) throws Exception {
-			performInsert(connection, tableDefinition, rows);
-		}
-
-		public ExecuteTableLoad(TableDefinition tableDefinition, List<Object[]> rows2) {
-			super();
-			this.rows = rows2;
-			this.tableDefinition = tableDefinition;
-		}
-	}
-
-	public static void addSqlFromDdl(OutputStream os, Connection connection, String srcSchema, String query) throws Exception
+	protected static void addSqlFromDdl(Target target, Connection connection, String srcSchema, String query) throws Exception
 	{
 		List<String> statements = extractDDL(connection, srcSchema, query);
 		Operation operation = new ExecuteSqlList(statements);
-		writeObject(os, operation);
+		target.apply(operation);
+	}
+
+	static class OutputStreamTarget implements Target 
+	{
+		final OutputStream os;
+		
+		public OutputStreamTarget(OutputStream os)
+		{
+			this.os = os;
+		}
+
+		public void apply(Operation operation) {
+			int len;
+			try {
+				len = writeObject(os, operation);
+			} catch (Exception e) {
+				throw new RuntimeException(e);
+			}
+			System.out.println("Add sql from ddl: "+len);
+		}
 	}
 	
-	public static void exportSchema (OutputStream os, Connection connection, String srcSchema) throws Exception
+	private static void preExport(Connection connection) throws Exception
 	{
 		// configure dbms_metadata export
 		execute(connection, "begin "+
@@ -334,15 +360,59 @@ public class OracleDumper {
 	            "dbms_metadata.SET_TRANSFORM_PARAM(dbms_metadata.SESSION_TRANSFORM, 'SEGMENT_ATTRIBUTES', FALSE); "+
 	            "dbms_metadata.SET_TRANSFORM_PARAM(dbms_metadata.SESSION_TRANSFORM, 'REF_CONSTRAINTS', FALSE); "+
 	            "end; ");
-
+	}
+	
+	private static void exportSchemaTables(Target target, Connection connection, String srcSchema) throws Exception
+	{
 		// ddl for creating tables
 		// skip any tables that are actually secondary objects of a domain index
-		addSqlFromDdl(os, connection, srcSchema, "select dbms_metadata.GET_DDL('TABLE', object_name) ddl from user_objects t where t.object_type = 'TABLE' and SECONDARY = 'N' and t.object_name not like 'BIN$%'");
+		addSqlFromDdl(target, connection, srcSchema, "select dbms_metadata.GET_DDL('TABLE', object_name) ddl from user_objects t where t.object_type = 'TABLE' and SECONDARY = 'N' and t.object_name not like 'BIN$%'");
 		
-		addTableInsertOperations(os, connection);
+	}
+	
+	public static void exportSchemaWithData (Target target, Connection connection, String srcSchema) throws Exception
+	{
+		preExport(connection);
 
-		addSqlFromDdl(os, connection, srcSchema, "select dbms_metadata.GET_DDL('SEQUENCE', sequence_name) ddl from user_sequences");
+		exportSchemaTables(target, connection, srcSchema);
+		
+		// copy over the data to the target
+		addTableInsertOperations(target, connection);
+		
+		exportSchemaTableDependentObjects(target, connection, srcSchema);
 
+		exportSchemaOtherObjects(target, connection, srcSchema);
+	}
+
+	public static void directCopySchema(final Connection dstConnection, Connection srcConnection, String dstSchema, String srcSchema, Collection<String> excludedTables) throws Exception
+	{
+		preExport(srcConnection);
+
+		Target destConnectionTarget = new Target()
+		{
+			public void apply(Operation operation) throws Exception {
+				operation.execute(dstConnection);
+			}
+		};
+		
+		exportSchemaTables(destConnectionTarget, srcConnection, srcSchema);
+
+		//copy over the data via selects
+		copyTableDataViaInsertSelects(dstConnection, srcConnection, dstSchema, srcSchema, excludedTables);
+
+		exportSchemaTableDependentObjects(destConnectionTarget, srcConnection, srcSchema);
+
+		exportSchemaOtherObjects(destConnectionTarget, srcConnection, srcSchema);
+	}
+
+	/**
+	 * @param target
+	 * @param connection
+	 * @param srcSchema
+	 * @throws Exception
+	 */
+	private static void exportSchemaTableDependentObjects(Target target,
+			Connection connection, String srcSchema) throws Exception {
 		// when creating indexes, skip any that are part of a primary or unique key constraint
 		// because those were created with the table definition.   Also skip any indexes on tables that actually
 		// we secondary objects of domain indexes.  Also skip any LOB indexes because those are created with 
@@ -352,17 +422,29 @@ public class OracleDumper {
 				"and not exists ( select 1 from user_objects so where so.secondary = 'Y' and so.object_name = i.index_name and so.object_type = 'INDEX' ) " +
 				"and index_type <> 'LOB' ";
 
-		addSqlFromDdl(os, connection, srcSchema, indexQuery);
+		addSqlFromDdl(target, connection, srcSchema, indexQuery);
 
-		addSqlFromDdl(os, connection, srcSchema, "select dbms_metadata.GET_DDL('REF_CONSTRAINT', constraint_name) ddl from user_constraints where constraint_type = 'R'");
+		addSqlFromDdl(target, connection, srcSchema, "select dbms_metadata.GET_DDL('REF_CONSTRAINT', constraint_name) ddl from user_constraints where constraint_type = 'R'");
+	}
 
-		addSqlFromDdl(os, connection, srcSchema, simpleDbmsExtractSql("PROCEDURE"));
 
-		addSqlFromDdl(os, connection, srcSchema, simpleDbmsExtractSql("FUNCTION"));
+	/**
+	 * @param target
+	 * @param connection
+	 * @param srcSchema
+	 * @throws Exception
+	 */
+	private static void exportSchemaOtherObjects(Target target,
+			Connection connection, String srcSchema) throws Exception {
+		addSqlFromDdl(target, connection, srcSchema, simpleDbmsExtractSql("PROCEDURE"));
 
-		addSqlFromDdl(os, connection, srcSchema, simpleDbmsExtractSql("VIEW"));
+		addSqlFromDdl(target, connection, srcSchema, simpleDbmsExtractSql("FUNCTION"));
 
-		addSqlFromDdl(os, connection, srcSchema, simpleDbmsExtractSql("TRIGGER"));
+		addSqlFromDdl(target, connection, srcSchema, simpleDbmsExtractSql("VIEW"));
+
+		addSqlFromDdl(target, connection, srcSchema, simpleDbmsExtractSql("TRIGGER"));
+
+		addSqlFromDdl(target, connection, srcSchema, "select dbms_metadata.GET_DDL('SEQUENCE', sequence_name) ddl from user_sequences");
 	}
 
 	private static String simpleDbmsExtractSql(String objType) {
@@ -385,32 +467,171 @@ public class OracleDumper {
 		statement.close();
 		return cols;
 	}
+
+	static class TableSpaceUsage {
+		final int bytes;
+		final int rows;
+		final String table;
+
+		/**
+		 * @param bytes
+		 * @param rows
+		 * @param table
+		 */
+		public TableSpaceUsage(int bytes, int rows, String table) {
+			super();
+			this.bytes = bytes;
+			this.rows = rows;
+			this.table = table;
+		}
+	}
 	
-	private static void addTableInsertOperations(OutputStream os,
-			Connection connection) throws Exception {
+	private static List<String> getUncopiableTables(Connection connection) throws Exception
+	{
+		List<String> names = new ArrayList<String>();
 
-		String selectTableSql = "select object_name table_name " +
-				"from user_objects " +
-				"where object_type = 'TABLE' and SECONDARY = 'N' " +
-				"and object_name not like 'BIN$%' ";
-		
-
-		PreparedStatement preparedStatement = connection.prepareStatement(selectTableSql);
+		String query = "select table_name from user_tab_columns where data_type like 'LONG%'";
+		PreparedStatement preparedStatement = connection.prepareStatement(query);
 		ResultSet resultSet = preparedStatement.executeQuery();
-		
 		while(resultSet.next())
 		{
 			String table = resultSet.getString(1);
+			names.add(table);
+		}
+		resultSet.close();
+		preparedStatement.close();
+		
+		return names;
+	}
+	
+	private static List<String> getTableNames(Connection connection) throws Exception
+	{
+		List<String> names = new ArrayList<String>();
+		
+		String selectTableSql = "select object_name table_name " +
+		"from user_objects " +
+		"where object_type = 'TABLE' and SECONDARY = 'N' " +
+		"and object_name not like 'BIN$%' ";
+		
+		PreparedStatement preparedStatement = connection.prepareStatement(selectTableSql);
+		ResultSet resultSet = preparedStatement.executeQuery();
+
+		while(resultSet.next())
+		{
+			String table = resultSet.getString(1);
+			names.add(table);
+		}
+		preparedStatement.close();
+		resultSet.close();
+		
+		return names;
+	}
+	
+	private static void copyTableDataViaInsertSelects(Connection dstConnection, Connection srcConnection, String dstSchema, String srcSchema, Collection<String> userExcludedTables) throws Exception
+	{
+		Statement srcStatement = srcConnection.createStatement();
+		Statement dstStatement = dstConnection.createStatement();
+
+		Set<String> excludedTables = new HashSet<String>();
+		excludedTables.addAll(getUncopiableTables(srcConnection));
+		System.out.println("The following tables have 'LONG' columns and therefore cannot be copied: "+excludedTables);
+		excludedTables.addAll(userExcludedTables);
+		
+		for(String table : getTableNames(srcConnection))
+		{
+			if(excludedTables.contains(table))
+				continue;
 			
+			String grantSql = "grant select on \""+table+"\" to \""+dstSchema+"\"";
+			printSqlToExecute(grantSql);
+			srcStatement.executeUpdate(grantSql);
+			
+			String insertSql = "insert into \""+table+"\" select * from \""+srcSchema+"\".\""+table+"\"";
+			printSqlToExecute(insertSql);
+			dstStatement.executeUpdate(insertSql);
+		}
+		dstStatement.close();
+		srcStatement.close();
+	}
+	
+	private static void addTableInsertOperations(Target target,
+			Connection connection) throws Exception {
+
+		List<TableSpaceUsage> usage = new ArrayList<TableSpaceUsage>();
+		
+		for(String table : getTableNames(connection))
+		{
 			TableDefinition tableDefinition = new TableDefinition(table, findColumns(connection, table));
 			List<Object[]> rows = exportTable(connection, tableDefinition);
 			System.out.println("Exported "+rows.size()+" from "+table);
 
 			Operation operation = new ExecuteTableLoad(tableDefinition, rows);
-			writeObject(os, operation);
+			target.apply(operation);
+//			int len = writeObject(os, operation);
+//			usage.add(new TableSpaceUsage(len, rows.size(), table));
 		}
 		
-		preparedStatement.close();
-		resultSet.close();
+		Collections.sort(usage, new Comparator<TableSpaceUsage>() {
+			public int compare(TableSpaceUsage o1, TableSpaceUsage o2) {
+				return -(o1.bytes - o2.bytes);
+			}
+		});
+
+		System.out.println("Table space consumption:");
+		for(int i=0;i<Math.min(usage.size(), 20);i++)
+		{
+			TableSpaceUsage u = usage.get(i);
+			System.out.println(u.table+": "+u.bytes+", "+u.rows);
+		}
+	}
+	
+	public static void main(String args[]) throws Exception
+	{
+		String jdbcString = args[1];
+		String username = args[2].toUpperCase();
+		String password = args[3];
+
+		DriverManager.registerDriver (new oracle.jdbc.driver.OracleDriver());
+		
+		if(args[0].equals("dropObjects"))
+		{
+			Connection connection = DriverManager.getConnection(jdbcString, username, password);
+			dropSchema(connection);
+		}
+		else if(args[0].equals("export"))
+		{
+			String filename = args[4];
+
+			FileOutputStream fos = new FileOutputStream(filename);
+			Connection connection = DriverManager.getConnection(jdbcString, username, password);
+			exportSchemaWithData(new OutputStreamTarget(fos), connection, username);
+		}
+		else if(args[0].equals("import"))
+		{
+			String filename = args[4];
+
+			FileInputStream fis = new FileInputStream(filename);
+			Connection connection = DriverManager.getConnection(jdbcString, username, password);
+			importSchema(fis, connection);
+		} 
+		else if(args[0].equals("copy"))
+		{
+			String dstSchema = args[2].toUpperCase();
+			String dstPassword = args[3];
+			String srcSchema = args[4].toUpperCase();
+			String srcPassword = args[5];
+
+			Connection dstConnection = DriverManager.getConnection(jdbcString, dstSchema, dstPassword);
+			Connection srcConnection = DriverManager.getConnection(jdbcString, srcSchema, srcPassword);
+
+			Set<String> excludedTables = new HashSet<String>();
+			
+			directCopySchema(dstConnection, srcConnection, dstSchema, srcSchema, excludedTables);
+		}
+		else
+		{
+			System.err.println("Usage: dropObjects jdbc_uri username password | export jdbc_uri username password filename | import jdbc_uri username password | copy jdbc_uri dst_username dst_password src_username src_password");
+			System.exit(-1);
+		}
 	}
 }

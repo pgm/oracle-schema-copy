@@ -1,0 +1,28 @@
+<project name="oracle-schema-dump" default="jar" basedir=".">
+	
+	<target name="jar" depends="compile">
+		<mkdir dir="dist"/>
+		
+		<jar destfile="dist/oracle-schema-dump.jar">
+			<fileset dir="build/classes">
+				<include name="**/*.class" />
+			</fileset>
+		</jar>
+	</target>
+
+	<target name="compile" depends="init">
+		<mkdir dir="build/classes"/>
+		<javac source="1.5" target="1.5" deprecation="on" optimize="on" 
+			debug="on" destdir="build/classes" srcdir="src">
+			<classpath>
+			      <fileset dir="lib">
+			        <include name="**/*.jar"/>
+			      </fileset>
+			</classpath>
+		</javac>
+	</target>
+
+	<target name="init">
+	</target>
+	
+</project>
