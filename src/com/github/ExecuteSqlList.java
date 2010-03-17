@@ -9,6 +9,8 @@ import java.util.List;
 
 class ExecuteSqlList implements Operation
 {
+	private static final long serialVersionUID = 1963554217334290052L;
+
 	List<String> statements;
 
 	public ExecuteSqlList(List<String> statements) {

@@ -6,10 +6,11 @@ package com.github;
 import java.sql.Connection;
 import java.util.List;
 
-import com.github.OracleDumper.TableDefinition;
 
 class ExecuteTableLoad implements Operation
 {
+	private static final long serialVersionUID = -143998643301142984L;
+	
 	List<Object[]> rows;
 	TableDefinition tableDefinition;
 	
