@@ -33,6 +33,8 @@ import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
+import oracle.jdbc.OraclePreparedStatement;
+
 public class OracleDumper {
 	
 	private static final int BATCH_SIZE = 500;
@@ -235,7 +237,27 @@ public class OracleDumper {
 		{
 			for(int i=0;i<table.columnNames.size();i++)
 			{
-				statement.setObject(i+1, row[i]);
+				if(table.isLob[i])
+				{
+					if(row[i] == null)
+					{
+						statement.setNull(i+1, Types.VARCHAR);
+					}
+					else if(row[i] instanceof String)
+					{
+						((OraclePreparedStatement)statement).setStringForClob(i+1,(String)row[i]);
+						//Clob clob = new Clob(new StringReader((String)row[i]));
+						//statement.setClob(i+1, clob);
+					}
+					else
+					{
+						statement.setObject(i+1, row[i] );
+					}
+				}
+				else
+				{
+					statement.setObject(i+1, row[i]);
+				}
 			}
 			statement.addBatch();
 			batchedCount ++;
@@ -475,21 +497,29 @@ public class OracleDumper {
 		return "select dbms_metadata.GET_DDL('"+objType+"', object_name) ddl from user_objects where object_type = '"+objType+"'";
 	}
 
-	private static List<String> findColumns(Connection connection, String tablename) throws Exception
+	private static Object[] findColumns(Connection connection, String tablename) throws Exception
 	{
 		List<String> cols = new ArrayList<String>();
+		List<Boolean> isLob = new ArrayList<Boolean>();
 		
-		String columnQuery = "select COLUMN_NAME from USER_TAB_COLUMNS WHERE TABLE_NAME = ?";
+		String columnQuery = "select COLUMN_NAME, DATA_TYPE from USER_TAB_COLUMNS WHERE TABLE_NAME = ?";
 		PreparedStatement statement = connection.prepareStatement(columnQuery);
 		statement.setString(1, tablename);
 		ResultSet resultSet = statement.executeQuery();
 		while(resultSet.next())
 		{
 			cols.add(resultSet.getString(1));
+			String type = resultSet.getString(2);
+			isLob.add(type.equals("CLOB") || type.equals("BLOB"));
 		}
 		resultSet.close();
 		statement.close();
-		return cols;
+
+		boolean [] isLobArray = new boolean[isLob.size()];
+		for(int i=0;i<isLob.size();i++)
+			isLobArray[i] = isLob.get(i);
+		
+		return new Object[]{cols, isLobArray};
 	}
 
 	static class TableSpaceUsage {
@@ -594,7 +624,11 @@ public class OracleDumper {
 				continue;
 			}
 			
-			TableDefinition tableDefinition = new TableDefinition(table, findColumns(connection, table));
+			Object[] tuple = findColumns(connection, table);
+			List<String> columns = (List<String>)tuple[0];
+			boolean isLob [] = (boolean[]) tuple[1];
+			
+			TableDefinition tableDefinition = new TableDefinition(table, columns, isLob);
 			List<Object[]> rows = exportTable(connection, tableDefinition);
 			System.out.println("Exported "+rows.size()+" from "+table);
 
