@@ -46,7 +46,7 @@ public class OracleDumper {
 		// everything else.
 //		executeFromQuery(connection, "select 'alter table \"'||table_name||'\" drop constraint \"'||constraint_name||'\"' from user_constraints where constraint_type = 'R'");
 //		executeFromQuery(connection, "select 'alter table \"'||table_name||'\" drop constraint \"'||constraint_name||'\"' from user_constraints where constraint_type not in ('C', 'R')");
-		executeFromQuery(connection, "select 'drop index \"' ||index_name|| '\"' from user_indexes where index_type = 'DOMAIN'");
+		executeFromQuery(connection, "select 'drop index \"'||index_name||'\" force' from user_indexes where index_type = 'DOMAIN'");
 		
 		String tableQuery = "select 'drop table \"' ||  table_name ||'\" cascade constraints' from user_tables";
 		// domain indexes sometimes create a supporting table
