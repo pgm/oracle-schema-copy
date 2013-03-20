@@ -21,15 +21,7 @@ import java.sql.ResultSetMetaData;
 import java.sql.SQLException;
 import java.sql.Statement;
 import java.sql.Types;
-import java.util.ArrayList;
-import java.util.Collection;
-import java.util.Collections;
-import java.util.Comparator;
-import java.util.Date;
-import java.util.HashSet;
-import java.util.List;
-import java.util.Properties;
-import java.util.Set;
+import java.util.*;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -141,7 +133,283 @@ public class OracleDumper {
         
         return baos.size();
 	}
-	
+
+    public static class ForeignKeyRelationship {
+        String parentTable;
+        String parentColumn;
+
+        String childTable;
+        String childColumn;
+
+        ForeignKeyRelationship(String parentTable, String parentColumn, String childTable, String childColumn) {
+            this.parentTable = parentTable;
+            this.parentColumn = parentColumn;
+            this.childTable = childTable;
+            this.childColumn = childColumn;
+        }
+    }
+
+    public static Map<String, String> getPrimaryKeys(Connection connection, Set<String> excludeTables) {
+        Map<String, String> result = new HashMap();
+        String query = "select ucc.table_name, ucc.column_name, ucc.position \n" +
+                "from user_constraints uc join user_cons_columns ucc on uc.constraint_name = ucc.constraint_name \n" +
+                "where uc.constraint_type = 'P' and uc.constraint_name not like 'BIN$%'";
+        try {
+            Statement statement = connection.createStatement();
+            try {
+                ResultSet resultSet = statement.executeQuery(query);
+                try {
+                    while(resultSet.next()) {
+                        String table = resultSet.getString(1);
+                        if(excludeTables.contains(table)) {
+                            continue;
+                        }
+                        String primaryKeyColumn = resultSet.getString(2);
+                        int columnPosition = resultSet.getInt(3);
+                        if(columnPosition != 1) {
+                            throw new RuntimeException("Table "+table+" has more then one column as its primary key");
+                        }
+                        result.put(table, primaryKeyColumn);
+                    }
+                } finally {
+                    resultSet.close();
+                }
+            } finally {
+                statement.close();
+            }
+        }catch (SQLException ex) {
+            throw new RuntimeException(ex);
+        }
+        return result;
+    }
+
+    public static List<ForeignKeyRelationship> getFkRelationships(Connection connection) {
+        String query = "select uccc.constraint_name, uccc.table_name, uccc.column_name, uccp.table_name, uccp.column_name from USER_CONSTRAINTS uc join user_cons_columns uccc on uc.constraint_name = uccc.constraint_name \n" +
+                "join user_cons_columns uccp on uc.r_constraint_name = uccp.constraint_name\n" +
+                "where uc.constraint_type = 'R'\n" +
+                "and uccc.position = uccp.position " +
+                "and uc.constraint_name not like 'BIN$%'";
+
+        List<ForeignKeyRelationship> result = new ArrayList();
+        try {
+        Statement statement = connection.createStatement();
+        try {
+            ResultSet resultSet = statement.executeQuery(query);
+            try {
+                while(resultSet.next()) {
+                    String parentTable = resultSet.getString(2);
+                    String parentColumn = resultSet.getString(3);
+                    String childTable = resultSet.getString(4);
+                    String childColumn = resultSet.getString(5);
+                    result.add(new ForeignKeyRelationship(parentTable, parentColumn, childTable, childColumn));
+                }
+            } finally {
+                resultSet.close();
+            }
+        } finally {
+            statement.close();
+        }
+        }catch (SQLException ex) {
+            throw new RuntimeException(ex);
+        }
+        return result;
+    }
+
+    public static class MultiMap<K,V> {
+        Map<K,Set<V>> map = new HashMap();
+
+        public void add(K key, V value) {
+            Set<V> set = map.get(key);
+            if(set == null) {
+                set = new HashSet<V>();
+                map.put(key, set);
+            }
+            set.add(value);
+        }
+
+        public Collection<V> get(K key) {
+            if(map.containsKey(key)) {
+                return map.get(key);
+            } else {
+                return Collections.EMPTY_SET;
+            }
+        }
+
+        public void remove(K key, V value) {
+            if(map.containsKey(key)) {
+                Set<V> set = map.get(key);
+                set.remove(value);
+
+                if(set.size() == 0) {
+                    map.remove(key);
+                }
+            }
+        }
+
+        public boolean contains(K key, V value) {
+            return get(key).contains(value);
+        }
+
+        public int size() {
+            return map.size();
+        }
+
+        public Set<K> keySet() {
+            return map.keySet();
+        }
+
+        public String toString() {
+        return map.toString(); }
+    }
+
+    public static class TableSelection {
+        String table;
+        String column;
+        List<Object> values;
+
+        TableSelection(String table, String column, List<Object> values) {
+            this.table = table;
+            this.column = column;
+            this.values = values;
+        }
+    }
+
+    public static List<ForeignKeyRelationship> filterRelationships(List<ForeignKeyRelationship> relationships, Collection<String> exclusions) {
+        List<ForeignKeyRelationship> results = new ArrayList<ForeignKeyRelationship>();
+        for(ForeignKeyRelationship relationship : relationships ) {
+            if(!(exclusions.contains(relationship.childTable+"."+relationship.childColumn+"="+relationship.parentTable+"."+relationship.parentColumn) ||
+                    exclusions.contains(relationship.parentTable+"."+relationship.parentColumn+"="+relationship.childTable+"."+relationship.childColumn)) ) {
+                results.add(relationship);
+            }
+        }
+        return results;
+    }
+
+    public static MultiMap<String, ForeignKeyRelationship> getFkRelationshipsByTable(Collection<ForeignKeyRelationship> relationships) {
+        MultiMap<String, ForeignKeyRelationship> map = new MultiMap();
+        for(ForeignKeyRelationship relationship : relationships) {
+            map.add(relationship.childTable, relationship);
+            map.add(relationship.parentTable, relationship);
+        }
+        return map;
+    }
+
+    public static List<Object> findLinkedRows(Connection connection, String parentTable, String parentColumn, List<Object> parentIds, String childTable, String childColumn, String childPk) {
+        if(parentIds.size() == 0)
+            return Collections.EMPTY_LIST;
+
+        StringBuilder questionMarks = new StringBuilder();
+        for(int i = 0;i<parentIds.size();i++) {
+            if(i > 0) {
+                questionMarks.append(", ");
+            }
+            questionMarks.append("?");
+        }
+
+        List<Object> result = new ArrayList<Object>();
+        try {
+            PreparedStatement statement = connection.prepareStatement("SELECT "+childPk+" FROM "+childTable+" c WHERE "+childColumn+" IN ("+questionMarks+")");
+            try {
+                for(int i=0;i<parentIds.size();i++) {
+                    statement.setObject(i+1, parentIds.get(i));
+                }
+                ResultSet resultSet = statement.executeQuery();
+                try {
+                    while(resultSet.next()) {
+                        result.add(resultSet.getObject(1));
+                    }
+                } finally {
+                    resultSet.close();
+                }
+            } finally {
+                statement.close();
+            }
+        }catch (SQLException ex) {
+            throw new RuntimeException(ex);
+        }
+        return result;
+    }
+
+    public static List<TableSelection> walkLinked(Connection connection, String table, MultiMap<String, ForeignKeyRelationship> relationshipMap, Map<String, String> pks, List<Object> ids, Set<String> visitedTables) {
+        if(visitedTables.contains(table))
+            return Collections.EMPTY_LIST;
+        visitedTables.add(table);
+
+        List<TableSelection> selections = new ArrayList<TableSelection>();
+
+        Collection<ForeignKeyRelationship> relationships = relationshipMap.get(table);
+        for(ForeignKeyRelationship relationship : relationships) {
+            String currentColumn;
+            String nextTable;
+            String nextColumn;
+            if(relationship.parentTable.equals(table)) {
+                currentColumn = relationship.parentColumn;
+                nextTable = relationship.childTable;
+                nextColumn = relationship.childColumn;
+            } else {
+                currentColumn = relationship.childColumn;
+                nextTable = relationship.parentTable;
+                nextColumn = relationship.parentColumn;
+            }
+
+            String nextTablePk = pks.get(nextTable);
+            List<Object> childIds = findLinkedRows(connection, table, currentColumn, ids, nextTable, nextColumn, nextTablePk);
+            selections.add(new TableSelection(nextTable, nextColumn, childIds));
+
+            selections.addAll(walkLinked(connection, nextTable, relationshipMap, pks, childIds, visitedTables));
+        }
+
+        return selections;
+    }
+
+    public static List<String> orderTableDependencies(List<ForeignKeyRelationship> relationships){
+        // let ordering = []
+        // construct a list of (table, dependancies)
+        // for each rec where deps == {}, add table name to ordering and remove rec.table from all pairs
+        // repeat.  If no table is without dependancies is found, throw an error because implies a cycle
+        MultiMap<String, String> dependencies = new MultiMap<String, String>();
+        Set<String> tables = new HashSet<String>();
+        List<String> ordered = new ArrayList<String>();
+
+        for(ForeignKeyRelationship relationship : relationships) {
+            if(!relationship.childTable.equals(relationship.parentTable))
+                dependencies.add(relationship.childTable, relationship.parentTable);
+
+            tables.add(relationship.childTable);
+            tables.add(relationship.parentTable);
+        }
+
+        while(dependencies.size() > 0) {
+            List<String> next = new ArrayList();
+
+            // find tables with no remaining unmet dependencies
+            for(String table : tables) {
+                if(dependencies.get(table).size() == 0) {
+                    next.add(table);
+                }
+            }
+
+            if(next.size() == 0) {
+                throw new RuntimeException("Could not make forward progress.  Suspected cycle in "+dependencies);
+            }
+
+            ordered.addAll(next);
+            tables.removeAll(next);
+
+            // remove these tables from the unsatisfied dependency lists
+            for(String table : next) {
+                for(String key : new ArrayList<String>(dependencies.keySet())) {
+                    dependencies.remove(key, table);
+                }
+            }
+        }
+
+        return ordered;
+    }
+
+    public void performCopy(List<TableSelection> selections, List<String> orderedTables) {
+        // then, iterate through table order, and perform copy associated with that copy
+    }
 
 	public static List<Object []> exportTable(Connection connection, TableDefinition table) throws Exception 
 	{
@@ -418,7 +686,7 @@ public class OracleDumper {
 		exportSchemaTables(target, connection, srcSchema, excludedTables);
 		
 		// copy over the data to the target
-		addTableInsertOperations(target, connection, excludedTables);
+		addTableInsertOperations(target, connection, excludedTables, getTableNames(connection));
 		
 		exportSchemaTableDependentObjects(target, connection, srcSchema, excludedTables);
 
@@ -446,6 +714,16 @@ public class OracleDumper {
 		exportSchemaOtherObjects(destConnectionTarget, srcConnection, srcSchema, excludedSequences);
 	}
 
+    public static void copyData(final Connection dstConnection, Connection srcConnection, Collection<String> excludedTables) throws Exception
+    {
+        Target destConnectionTarget = new Target()
+        {
+            public void apply(Operation operation) throws Exception {
+                operation.execute(dstConnection);
+            }
+        };
+        addTableInsertOperations(destConnectionTarget, srcConnection, new HashSet(excludedTables), getTableNames(srcConnection));
+    }
 
 	/**
 	 * @param target
@@ -612,11 +890,11 @@ public class OracleDumper {
 	}
 	
 	private static void addTableInsertOperations(Target target,
-			Connection connection, Set<String> excludedTables) throws Exception {
+			Connection connection, Set<String> excludedTables, Collection<String> tableNames) throws Exception {
 
 		List<TableSpaceUsage> usage = new ArrayList<TableSpaceUsage>();
 		
-		for(String table : getTableNames(connection))
+		for(String table : tableNames)
 		{
 			if(excludedTables.contains(table))
 			{
@@ -722,13 +1000,105 @@ public class OracleDumper {
 			Set<String> excludedSequences = getExcludedTables(properties, "copy.exclude.sequences");
 			
 			directCopySchema(dstConnection, srcConnection, dstSchema, srcSchema, excludedTables, excludedSequences);
-		}
+        } else if(args[0].equals("exportData")) {
+            Connection srcConnection = DriverManager.getConnection(jdbcString, username, password);
+
+            String filename = args[4];
+
+            /*
+            Collection<String> toKeep = Arrays.asList("LABORATORY_TREE",
+                    "ONTOLOGY",
+                    "PROJECT",
+                    "STATEMENT_LOG",
+                    "SUBSTANCE",
+                    "TREE_ROOT",
+                    "ASSAY",
+                    "ASSAY_DOCUMENT",
+                    "ELEMENT_HIERARCHY",
+                    "ERROR_LOG",
+                    "EXPERIMENT",
+                    "EXTERNAL_REFERENCE",
+                    "EXTERNAL_SYSTEM",
+                    "IDENTIFIER_MAPPING",
+                    "STAGE_TREE",
+                    "UNIT_CONVERSION",
+                    "UNIT_TREE",
+                    "ASSAY_CONTEXT",
+                    "ASSAY_CONTEXT_ITEM",
+                    "ASSAY_DESCRIPTOR_TREE",
+                    "BIOLOGY_DESCRIPTOR_TREE",
+                    "ELEMENT",
+                    "INSTANCE_DESCRIPTOR_TREE",
+                    "MEASURE",
+                    "PROJECT_CONTEXT_ITEM",
+                    "RESULT_TYPE_TREE",
+                    "STEP_CONTEXT",
+                    "STEP_CONTEXT_ITEM",
+                    "TEAM",
+                    "TEAM_MEMBER",
+                    "ASSAY_CONTEXT_MEASURE",
+                    "EXPRMT_CONTEXT",
+                    "EXPRMT_CONTEXT_ITEM",
+                    "FAVORITE",
+                    "PERSON",
+                    "PERSON_ROLE",
+                    "PROJECT_CONTEXT",
+                    "PROJECT_DOCUMENT",
+                    "ROLE",
+                    "ONTOLOGY_ITEM",
+                    "DICTIONARY_TREE",
+                    "STATS_MODIFIER_TREE",
+                    "PROJECT_STEP",
+                    "EXPRMT_MEASURE",
+                    "PRJCT_EXPRMT_CONTEXT",
+                    "PROJECT_EXPERIMENT",
+                    "PRJCT_EXPRMT_CNTXT_ITEM",
+                    "BARD_TREE",
+                    "EXPERIMENT_FILE");
+                    */
+            Collection<String> tables = getTableNames(srcConnection);
+
+//            Set<String> intersection = new HashSet<String>();
+//            for(String k : tables) {
+//                if (toKeep.contains(k))
+//                    intersection.add(k);
+//            }
+            Collection<String> intersection = tables;
+
+            FileOutputStream fos = new FileOutputStream(filename);
+            addTableInsertOperations(new OutputStreamTarget(fos), srcConnection, new HashSet(), intersection);
+            fos.close();
+
+		} else if(args[0].equals("copyData")) {
+            String srcJdbcString = args[4];
+            String srcSchema = args[5].toUpperCase();
+            String srcPassword = args[6];
+
+            Connection dstConnection = DriverManager.getConnection(jdbcString, username, password);
+            Connection srcConnection = DriverManager.getConnection(srcJdbcString, srcSchema, srcPassword);
+
+            copyData( dstConnection,  srcConnection, Collections.EMPTY_LIST);
+        }
 		else
 		{
 			System.err.println("Usage: dropObjects jdbc_uri username password | export jdbc_uri username password filename | import jdbc_uri username password | copy jdbc_uri dst_username dst_password src_username src_password");
 			System.exit(-1);
 		}
 	}
+
+    static public List<TableSelection> reorderTableSelections(List<String> ordering, List<TableSelection> selections) {
+        Map<String, TableSelection> selectionMap = new HashMap<String, TableSelection>();
+        for(TableSelection selection : selections) {
+            selectionMap.put(selection.table, selection);
+        }
+        List<TableSelection> result = new ArrayList();
+        for(String table : ordering) {
+            TableSelection selection = selectionMap.get(table);
+            if(selection != null)
+            result.add(selection);
+        }
+        return result;
+    }
 
 	/**
 	 * @param properties
