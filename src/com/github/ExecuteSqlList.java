@@ -20,17 +20,21 @@ class ExecuteSqlList implements Operation
 
 	public void execute(Connection connection) throws Exception {
 		Statement statement = connection.createStatement();
-		for(String str : statements)
-		{
-			try 
-			{
-				OracleDumper.printSqlToExecute(str);
-				statement.execute(str);
-			} 
-			catch (Exception ex)
-			{
-				throw new RuntimeException("Could not execute: "+str, ex);
-			}
-		}
+        try {
+            for(String str : statements)
+            {
+                try
+                {
+                    OracleDumper.printSqlToExecute(str);
+                    statement.execute(str);
+                }
+                catch (Exception ex)
+                {
+                    throw new RuntimeException("Could not execute: "+str, ex);
+                }
+            }
+        } finally {
+            statement.close();
+        }
 	}
 }
