@@ -3,12 +3,12 @@ package com.github;
 import java.io.OutputStream;
 
 /**
-* Created with IntelliJ IDEA.
-* User: pmontgom
-* Date: 3/21/13
-* Time: 11:52 AM
-* To change this template use File | Settings | File Templates.
-*/
+ * Created with IntelliJ IDEA.
+ * User: pmontgom
+ * Date: 3/21/13
+ * Time: 11:52 AM
+ * To change this template use File | Settings | File Templates.
+ */
 public class OutputStreamTarget implements Target {
     final OutputStream os;
 
@@ -19,10 +19,20 @@ public class OutputStreamTarget implements Target {
     public void apply(Operation operation) {
         int len;
         try {
-            len = OracleDumper.writeObject(os, operation);
+            len = CopyUtils.writeObject(os, operation);
         } catch (Exception e) {
             throw new RuntimeException(e);
         }
         System.out.println("Add sql from ddl: " + len);
     }
+
+    @Override
+    public void close() {
+        try {
+            os.close();
+        } catch (Exception ex) {
+            throw new RuntimeException(ex);
+        }
+    }
+
 }

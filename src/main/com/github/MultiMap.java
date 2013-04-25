@@ -3,18 +3,18 @@ package com.github;
 import java.util.*;
 
 /**
-* Created with IntelliJ IDEA.
-* User: pmontgom
-* Date: 3/20/13
-* Time: 10:48 PM
-* To change this template use File | Settings | File Templates.
-*/
-public class MultiMap<K,V> {
-    Map<K,Set<V>> map = new HashMap();
+ * Created with IntelliJ IDEA.
+ * User: pmontgom
+ * Date: 3/20/13
+ * Time: 10:48 PM
+ * To change this template use File | Settings | File Templates.
+ */
+public class MultiMap<K, V> {
+    Map<K, Set<V>> map = new HashMap();
 
     public void add(K key, V value) {
         Set<V> set = map.get(key);
-        if(set == null) {
+        if (set == null) {
             set = new HashSet<V>();
             map.put(key, set);
         }
@@ -22,7 +22,7 @@ public class MultiMap<K,V> {
     }
 
     public Collection<V> get(K key) {
-        if(map.containsKey(key)) {
+        if (map.containsKey(key)) {
             return map.get(key);
         } else {
             return Collections.EMPTY_SET;
@@ -30,11 +30,11 @@ public class MultiMap<K,V> {
     }
 
     public void remove(K key, V value) {
-        if(map.containsKey(key)) {
+        if (map.containsKey(key)) {
             Set<V> set = map.get(key);
             set.remove(value);
 
-            if(set.size() == 0) {
+            if (set.size() == 0) {
                 map.remove(key);
             }
         }
@@ -53,5 +53,6 @@ public class MultiMap<K,V> {
     }
 
     public String toString() {
-    return map.toString(); }
+        return map.toString();
+    }
 }
