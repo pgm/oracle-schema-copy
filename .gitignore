@@ -1,2 +1,5 @@
 .idea/
+.gradle/
+build/
 oracle-schema-copy.iml
+gradle.properties
