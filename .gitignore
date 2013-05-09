@@ -1,5 +1,8 @@
 .idea/
 .gradle/
 build/
-oracle-schema-copy.iml
+out/
+# any intellij project files
+oracle-schema-copy.*
+# developer specific gradle.properites file
 gradle.properties
