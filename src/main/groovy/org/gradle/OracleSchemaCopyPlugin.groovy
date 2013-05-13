@@ -39,6 +39,14 @@ In the above example, devenv should match the <someAlias> params above in order 
     @Override
     void apply(Project project) {
 
+        // get the jdbc driver on the classpath for the classloader groovy uses
+        URLClassLoader loader = GroovyObject.class.classLoader
+        project.configurations.oracleSchemaCopyClasspath.each { File file ->
+            if (file.getName().contains('ojdbc')) {
+                loader.addURL(file.toURL())
+            }
+        }
+
         project.task('oracleSchemaCopyUsage', description: 'a description of usage') << {
             println(USAGE_MESSAGE)
         }
