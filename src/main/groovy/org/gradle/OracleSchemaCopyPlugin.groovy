@@ -2,6 +2,10 @@ package org.gradle
 
 import org.gradle.api.Plugin
 import org.gradle.api.Project
+import org.gradle.api.tasks.JavaExec
+
+import static org.gradle.utils.GradleUtils.ensureRequiredProperties
+import static org.gradle.utils.GradleUtils.prodCheck
 
 /**
  * Created with IntelliJ IDEA.
@@ -12,7 +16,7 @@ import org.gradle.api.Project
  */
 class OracleSchemaCopyPlugin implements Plugin<Project> {
 
-    String usageMessage = """
+    final static String USAGE_MESSAGE = """
 oracleSchemaCopy provides some utilities for importing and exporting ddls and data
 example commands
 gradle exportToFile -Psrc=<someAlias>
@@ -31,12 +35,23 @@ excluded.schemaTables=DATABASECHANGELOGLOCK,DATABASECHANGELOG
 
 In the above example, devenv should match the <someAlias> params above in order to identify groups of db connection info""".trim()
 
+
     @Override
     void apply(Project project) {
+
         project.task('oracleSchemaCopyUsage', description: 'a description of usage') << {
-            println (usageMessage)
+            println(USAGE_MESSAGE)
         }
         project.task('exportToFile', type: ExportToFileTask)
-        project.task('importFromFile', type: ImportFromFileTask)
+
+        project.task('importFromFile', type: JavaExec, description: 'import a snapshot into a schema from a gzipped file')
+
+        project.tasks.importFromFile.doFirst { task ->
+            ensureRequiredProperties(project, ['filename', 'dst'])
+            prodCheck(project)
+            task.main = 'com.github.Main'
+            task.classpath = project.configurations.oracleSchemaCopyClasspath
+            task.args = "import ${project['filename']} ${project['dst']} -properties gradle.properties".split().toList()
+        }
     }
 }

@@ -23,7 +23,8 @@ class ExportToFileTask extends DefaultTask {
 
     @TaskAction
     def exportSchemaToFile() {
-        final String alias = readRequiredProperty(project, 'src')
+        ensureRequiredProperties(project, ['src'])
+        final String alias = project['src']
 
         Map srcConnMap = getConnectionInfo(project, alias)
         Connection srcConn = getConnection(srcConnMap)

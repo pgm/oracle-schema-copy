@@ -1,5 +1,6 @@
 package org.gradle.utils
 
+import org.gradle.api.GradleException
 import org.gradle.api.Project
 
 /**
@@ -21,9 +22,31 @@ class GradleUtils {
         filteredTables
     }
 
-    static String readRequiredProperty(Project project, String propertyName) {
-        if (!project.hasProperty(propertyName)) {
-            project.ant.fail("${propertyName} project property required be sure to add -P${propertyName}=foo")
+    static void ensureRequiredProperties(Project project, List<String> propertyNames) {
+        List errors = validateRequiredProperties(project, propertyNames)
+        if (errors) {
+            throw new GradleException(errors.join('\n'))
+        }
+    }
+
+    static List<String> validateRequiredProperties(Project project, List<String> propertyNames) {
+        List<String> errors = []
+        for (String propertyName in propertyNames) {
+            if (!project.hasProperty(propertyName)) {
+                errors.add("Missing property '${propertyName}', please specify -P${propertyName}=someValue")
+            }
+        }
+        errors
+    }
+
+    static void prodCheck(Project project) {
+        if (project.hasProperty('dst') ) {
+            String jdbcUrl = getConnectionInfo(project, project['dst']).url?.toLowerCase()
+            if (jdbcUrl && jdbcUrl.contains('prod') && !project.hasProperty('dstProduction')){
+              String msg = ["In order to have a dst that contains prod in the jdbc url, you have to specify -PdstProduction.",
+                                "Be sure this is what you want to do!"].join('\n')
+                throw new GradleException(msg)
+            }
         }
     }
 }
