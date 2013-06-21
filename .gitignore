@@ -3,6 +3,6 @@
 build/
 out/
 # any intellij project files
-oracle-schema-copy.*
+oracle-schema-copy.iml
 # developer specific gradle.properites file
 gradle.properties

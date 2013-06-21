@@ -205,6 +205,11 @@ public class CopyUtils {
         }
     }
 
+    private static void exportPackages(Target target, Connection connection, String srcSchema) {
+        Collection<String> packageNames = getObjectNames(connection, "object_type = 'PACKAGE'");
+        exportPackages(target, connection, srcSchema, packageNames);
+    }
+
     private static void exportPackages(Target target, Connection connection, String srcSchema, Collection<String> packageNames) {
         for (String packageName : packageNames) {
             addSqlFromDdl(target, connection, srcSchema, "select dbms_metadata.GET_DDL('PACKAGE_SPEC', '" + packageName + "') ddl from dual");
@@ -266,13 +271,17 @@ public class CopyUtils {
         return "select dbms_metadata.GET_DDL('" + ddlType + "', object_name) ddl from user_objects where object_type = '" + objType + "'";
     }
 
+
     public static List<String> getTableNames(Connection connection) {
+        return getObjectNames(connection, "object_type = 'TABLE' and SECONDARY = 'N' and object_name not like 'BIN$%' ");
+    }
+
+    public static List<String> getObjectNames(Connection connection, String whereClause) {
         List<String> names = new ArrayList<String>();
 
-        String selectTableSql = "select object_name table_name " +
+        String selectTableSql = "select object_name " +
                 "from user_objects " +
-                "where object_type = 'TABLE' and SECONDARY = 'N' " +
-                "and object_name not like 'BIN$%' ";
+                "where "+whereClause;
 
         try {
             PreparedStatement preparedStatement = connection.prepareStatement(selectTableSql);
@@ -992,6 +1001,8 @@ public class CopyUtils {
         exportTriggers(target, connection, srcSchema);
 
         exportSequences(target, connection, srcSchema);
+
+        exportPackages(target, connection, srcSchema);
     }
 
 }
