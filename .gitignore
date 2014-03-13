@@ -6,3 +6,6 @@ out/
 oracle-schema-copy.iml
 # developer specific gradle.properites file
 gradle.properties
+gradle/wrapper/gradle-wrapper.jar
+gradle/wrapper/gradle-wrapper.properties
+gradlew

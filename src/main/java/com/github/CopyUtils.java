@@ -213,7 +213,11 @@ public class CopyUtils {
     private static void exportPackages(Target target, Connection connection, String srcSchema, Collection<String> packageNames) {
         for (String packageName : packageNames) {
             addSqlFromDdl(target, connection, srcSchema, "select dbms_metadata.GET_DDL('PACKAGE_SPEC', '" + packageName + "') ddl from dual");
-            addSqlFromDdl(target, connection, srcSchema, "select dbms_metadata.GET_DDL('PACKAGE_BODY', '" + packageName + "') ddl from dual");
+            Collection<String> packageBodys = getObjectNames(connection, "object_type = 'PACKAGE BODY' and object_name='" + packageName + "'");
+            for (String packageBody : packageBodys) {
+                System.out.println("Printing Package: " + packageBody);
+                addSqlFromDdl(target, connection, srcSchema, "select dbms_metadata.GET_DDL('PACKAGE_BODY', '" + packageBody + "') ddl from dual");
+            }
         }
     }
 
